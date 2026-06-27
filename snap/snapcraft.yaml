@@ -71,6 +71,13 @@ parts:
       - libcairo2
       - libpango-1.0-0
       - libpangocairo-1.0-0
+    stage:
+      - -usr/share/icons
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/locale
+      - -usr/share/bug
+      - -usr/share/lintian
 
   launcher:
     plugin: dump
