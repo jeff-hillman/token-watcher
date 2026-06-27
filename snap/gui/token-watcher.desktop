@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Token Watcher
+Comment=Monitor your OpenRouter API spend
+Exec=token-watcher
+Icon=${SNAP}/snap/gui/token-watcher.png
+Categories=Utility;
+StartupNotify=false
