@@ -1,0 +1,74 @@
+name: token-watcher
+version: "0.1.0"
+summary: Floating desktop widget to monitor OpenRouter API credit usage
+description: |
+  A lightweight always-on-top GTK4 desktop widget for Ubuntu that shows
+  your current OpenRouter API spend at a glance.
+
+  After installing, set your OpenRouter API key:
+
+    snap set token-watcher api-key="sk-or-..."
+
+  Optional: change the refresh interval (default 60 seconds):
+
+    snap set token-watcher refresh-interval=30
+
+  Then launch:
+
+    token-watcher
+
+  The widget floats above all windows. Drag it anywhere on screen.
+  Double-click to force an immediate refresh.
+  Right-click for options.
+
+grade: stable
+confinement: strict
+base: core24
+
+contact: https://github.com/jeff-hillman/token-watcher/issues
+issues: https://github.com/jeff-hillman/token-watcher/issues
+source-code: https://github.com/jeff-hillman/token-watcher
+website: https://github.com/jeff-hillman/token-watcher
+
+apps:
+  token-watcher:
+    command: bin/launcher
+    extensions: [gnome]
+    plugs:
+      - network
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - home
+    environment:
+      GTK_A11Y: none
+      GI_TYPELIB_PATH: $SNAP/usr/lib/x86_64-linux-gnu/girepository-1.0:$GI_TYPELIB_PATH
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+
+parts:
+  python-app:
+    plugin: nil
+    source: src
+    override-build: |
+      mkdir -p $SNAPCRAFT_PART_INSTALL/app
+      cp token_watch.py $SNAPCRAFT_PART_INSTALL/app/
+    stage-packages:
+      - python3
+      - python3-gi
+      - python3-gi-cairo
+      - python3-cairo
+      - gir1.2-gtk-4.0
+      - gir1.2-gdk-4.0
+      - gir1.2-gdkx11-4.0
+      - gir1.2-pango-1.0
+      - gir1.2-pangocairo-1.0
+      - gir1.2-gtklayershell-0.1
+      - libgtk-4-1
+      - libgtk-layer-shell0
+
+  launcher:
+    plugin: dump
+    source: snap/local
+    organize:
+      launcher: bin/launcher
