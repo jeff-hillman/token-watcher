@@ -106,7 +106,3 @@ Always-on-top behaviour is implemented via:
 ## Author
 
 Jeff Hillman — [github.com/jeff-hillman](https://github.com/jeff-hillman)
-
-## License
-
-MIT
