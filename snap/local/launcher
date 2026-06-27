@@ -1,2 +1,2 @@
 #!/bin/sh
-exec python3 "$SNAP/app/token_watch.py" "$@"
+exec python3 "$SNAP/app/token_watch.py" "$@" 2>/dev/null
