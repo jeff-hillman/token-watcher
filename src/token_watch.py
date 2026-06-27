@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
 token-watcher - AI API spend desktop widget
-A floating, always-on-top GTK4 widget for monitoring API spend across providers.
+A floating, always-on-top GTK4 widget for monitoring API spend.
+
+Currently supported providers: openrouter
 
 Config (as a snap):
-  snap set token-watcher provider=openrouter
+  snap set token-watcher provider=openrouter   # default
   snap set token-watcher api-key="sk-or-..."
-
-  snap set token-watcher provider=anthropic
-  snap set token-watcher api-key="sk-ant-api03-..."        # rate-limit view
-  snap set token-watcher admin-key="sk-ant-admin01-..."    # unlocks spend data
-
-  snap set token-watcher refresh-interval=60               # optional, default 60s
+  snap set token-watcher refresh-interval=60   # optional, default 60s
 
 Config (standalone, via env vars):
   TOKENWATCH_PROVIDER=openrouter TOKENWATCH_API_KEY="sk-or-..." token-watcher
-  TOKENWATCH_PROVIDER=anthropic  TOKENWATCH_API_KEY="sk-ant-..." token-watcher
 """
 
 import cairo  # must be imported before gi loads cairo to register pycairo foreign types
@@ -38,7 +34,6 @@ import math
 import urllib.request
 import urllib.error
 import time
-from datetime import datetime, timezone
 
 # --------------------------------------------------------------------------
 # Constants
@@ -146,114 +141,16 @@ class OpenRouterProvider:
 
 
 # --------------------------------------------------------------------------
-# Provider: Anthropic
+# Provider registry
 # --------------------------------------------------------------------------
-
-class AnthropicProvider:
-    NAME    = "anthropic"
-    DISPLAY = "ANTHROPIC"
-
-    # Regular API key: ping models list just to validate the key, then read
-    # rate-limit headers from the response.
-    MODELS_URL = "https://api.anthropic.com/v1/models"
-
-    # Admin API key: query current-month cost report
-    COST_URL   = "https://api.anthropic.com/v1/organizations/cost_report"
-
-    @staticmethod
-    def fetch(api_key: str, admin_key: str = "", **_kwargs) -> dict:
-        spend_result = None
-        extra_result = None
-
-        # --- Spend via admin key ---
-        if admin_key:
-            spend_result = AnthropicProvider._fetch_spend(admin_key)
-
-        # --- Rate-limit headroom via regular key ---
-        if api_key:
-            extra_result = AnthropicProvider._fetch_headroom(api_key)
-
-        # Merge: prefer spend data if we have it; add headroom as extra line
-        if spend_result and spend_result.get("error") is None:
-            r = spend_result
-            if extra_result and extra_result.get("extra"):
-                r["extra"] = extra_result["extra"]
-            return r
-
-        if extra_result and extra_result.get("error") is None:
-            return extra_result
-
-        # Both failed - return whichever error is most informative
-        if spend_result:
-            return spend_result
-        if extra_result:
-            return extra_result
-        return _result(error="No API key set")
-
-    @staticmethod
-    def _fetch_spend(admin_key: str) -> dict:
-        """Use admin key + cost report to get current-month USD spend."""
-        try:
-            now   = datetime.now(timezone.utc)
-            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            url   = (
-                f"{AnthropicProvider.COST_URL}"
-                f"?starting_at={start.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-                f"&ending_at={now.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-                f"&bucket_width=1d"
-            )
-            body, _ = _http(url, {
-                "x-api-key":         admin_key,
-                "anthropic-version": "2023-06-01",
-            })
-            # Sum all cost buckets - amounts are in USD cents as decimal strings
-            total_cents = 0.0
-            for bucket in body.get("data", []):
-                for cost in bucket.get("costs", []):
-                    total_cents += float(cost.get("amount", 0))
-            spend = total_cents / 100.0  # cents → USD
-            return _result(spend=spend, spend_label="this calendar month")
-
-        except urllib.error.HTTPError as e:
-            msg = "Invalid admin key" if e.code == 401 else f"Admin API: HTTP {e.code}"
-            return _result(error=msg)
-        except Exception as e:
-            return _result(error=f"Admin API: {str(e)[:35]}")
-
-    @staticmethod
-    def _fetch_headroom(api_key: str) -> dict:
-        """Use regular key to read rate-limit headers and show token headroom."""
-        try:
-            # GET /v1/models is lightweight and always returns rate-limit headers
-            body, resp = _http(AnthropicProvider.MODELS_URL, {
-                "x-api-key":         api_key,
-                "anthropic-version": "2023-06-01",
-            })
-            # anthropic-ratelimit-tokens-remaining (nearest 1000)
-            remaining = resp.headers.get("anthropic-ratelimit-tokens-remaining")
-            limit_hdr = resp.headers.get("anthropic-ratelimit-tokens-limit")
-            if remaining and limit_hdr:
-                rem = int(remaining)
-                lim = int(limit_hdr)
-                pct = (rem / lim * 100) if lim else 0
-                extra = f"{rem:,} / {lim:,} tokens remaining ({pct:.0f}%)"
-                return _result(extra=extra, spend_label="rate limit window")
-            return _result(extra="API key valid", spend_label="")
-
-        except urllib.error.HTTPError as e:
-            msg = "Invalid API key" if e.code == 401 else f"HTTP {e.code}"
-            return _result(error=msg)
-        except Exception as e:
-            return _result(error=str(e)[:40])
-
-
-# --------------------------------------------------------------------------
-# Provider registry - add new providers here
-# --------------------------------------------------------------------------
+# To add a new provider:
+#   1. Create a class with NAME, DISPLAY, and a fetch(**kwargs) -> dict method
+#   2. fetch() receives api_key, admin_key, and any future config keys
+#   3. Return via _result(): spend, spend_label, limit, extra, error
+#   4. Add to PROVIDERS below
 
 PROVIDERS = {
     OpenRouterProvider.NAME: OpenRouterProvider,
-    AnthropicProvider.NAME:  AnthropicProvider,
 }
 
 def get_provider_class(name: str):

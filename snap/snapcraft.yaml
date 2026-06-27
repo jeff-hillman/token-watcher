@@ -1,31 +1,21 @@
 name: token-watcher
-version: "0.2.0"
+version: "0.1.0"
 summary: Floating desktop widget to monitor AI API spend
 description: |
   A lightweight always-on-top GTK4 desktop widget for Ubuntu that shows
-  your AI API spend at a glance. Supports multiple providers.
+  your OpenRouter API spend at a glance.
 
-  Supported providers: openrouter, anthropic
+  After installing, configure your API key:
 
-  Quick start (OpenRouter):
-
-    snap set token-watcher provider=openrouter
     snap set token-watcher api-key="sk-or-..."
-    token-watcher
 
-  Anthropic (rate-limit view):
-
-    snap set token-watcher provider=anthropic
-    snap set token-watcher api-key="sk-ant-api03-..."
-
-  Anthropic (spend view, requires admin key):
-
-    snap set token-watcher provider=anthropic
-    snap set token-watcher admin-key="sk-ant-admin01-..."
-
-  Optional:
+  Optional: change the refresh interval (default 60 seconds):
 
     snap set token-watcher refresh-interval=30
+
+  Then launch:
+
+    token-watcher
 
   The widget floats above all windows. Drag it anywhere on screen.
   Double-click to force an immediate refresh. Right-click for options.
