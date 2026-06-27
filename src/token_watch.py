@@ -213,6 +213,9 @@ class TokenWatch(Gtk.ApplicationWindow):
         self.set_default_size(W, H)
 
     def _setup_css(self):
+        # Force dark theme for the popover/menu regardless of system theme
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+
         provider = Gtk.CssProvider()
         provider.load_from_data(b"window { background-color: transparent; }")
         Gtk.StyleContext.add_provider_for_display(
