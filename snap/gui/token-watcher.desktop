@@ -3,6 +3,6 @@ Type=Application
 Name=Token Watcher
 Comment=Monitor your OpenRouter API spend
 Exec=token-watcher
-Icon=token-watcher
+Icon=/snap/token-watcher/current/meta/gui/token-watcher.png
 Categories=Utility;
 StartupNotify=false
