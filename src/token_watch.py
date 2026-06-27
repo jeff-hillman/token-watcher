@@ -534,7 +534,8 @@ class TokenWatch(Gtk.ApplicationWindow):
 
 class App(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="com.github.tokenwatcher")
+        super().__init__()
+        GLib.set_application_name("Token Watcher")
 
     def do_activate(self):
         win = TokenWatch(self)
