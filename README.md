@@ -1,25 +1,23 @@
 # token-watcher
 
-A floating, always-on-top desktop widget for Ubuntu that shows your current
-[OpenRouter](https://openrouter.ai) API spend at a glance.
+A floating, always-on-top desktop widget for Ubuntu that shows your AI API
+spend at a glance. Supports multiple providers.
 
 Built with Python and GTK4. Designed to sit in a corner of your desktop and
 stay out of the way until you need it.
 
-![screenshot placeholder](https://raw.githubusercontent.com/jeff-hillman/token-watcher/main/docs/screenshot.png)
+![screenshot](https://raw.githubusercontent.com/jeff-hillman/token-watcher/main/docs/screenshot.png)
 
 ---
 
-## Features
+## Supported providers
 
-- Dark card widget, always on top, no titlebar
-- Shows current billing period spend from the OpenRouter API
-- Drag anywhere on screen to reposition
-- Double-click to force an immediate refresh
-- Right-click for a quick menu (refresh / quit)
-- Polls every 60 seconds (configurable)
-- Freshness indicator dot (green = fresh, amber = stale)
-- Works on X11 and Wayland (via gtk-layer-shell)
+| Provider | Config | What it shows |
+|---|---|---|
+| **OpenRouter** | `api-key` | USD spend this billing period |
+| **Anthropic** | `api-key` + optional `admin-key` | Rate-limit headroom (regular key); spend this calendar month (admin key) |
+
+More providers can be added - see [Adding a provider](#adding-a-provider).
 
 ---
 
@@ -31,18 +29,31 @@ stay out of the way until you need it.
 sudo snap install token-watcher
 ```
 
-### Configure your API key
+### Configure
 
-Get your API key from [openrouter.ai/keys](https://openrouter.ai/keys), then:
-
+**OpenRouter:**
 ```bash
+snap set token-watcher provider=openrouter
 snap set token-watcher api-key="sk-or-..."
 ```
 
-Optionally change the refresh interval (default 60 seconds):
-
+**Anthropic (rate-limit view, regular key):**
 ```bash
-snap set token-watcher refresh-interval=30
+snap set token-watcher provider=anthropic
+snap set token-watcher api-key="sk-ant-api03-..."
+```
+
+**Anthropic (spend view, admin key):**
+```bash
+snap set token-watcher provider=anthropic
+snap set token-watcher admin-key="sk-ant-admin01-..."
+# api-key is optional alongside admin-key but adds rate-limit info
+snap set token-watcher api-key="sk-ant-api03-..."
+```
+
+**Optional settings:**
+```bash
+snap set token-watcher refresh-interval=30   # default: 60 seconds
 ```
 
 ### Launch
@@ -51,7 +62,14 @@ snap set token-watcher refresh-interval=30
 token-watcher
 ```
 
-Or find it in your application launcher.
+---
+
+## Usage
+
+- **Drag** anywhere on screen to reposition
+- **Double-click** to force an immediate refresh
+- **Right-click** for a quick menu (refresh / quit)
+- The dot in the top-right corner is green when data is fresh, amber when stale
 
 ---
 
@@ -68,15 +86,20 @@ sudo apt install python3-gi python3-gi-cairo python3-cairo \
 **Run:**
 
 ```bash
-TOKENWATCH_API_KEY="sk-or-..." python3 src/token_watch.py
+# OpenRouter
+TOKENWATCH_PROVIDER=openrouter TOKENWATCH_API_KEY="sk-or-..." python3 src/token_watch.py
+
+# Anthropic (rate limits only)
+TOKENWATCH_PROVIDER=anthropic TOKENWATCH_API_KEY="sk-ant-api03-..." python3 src/token_watch.py
+
+# Anthropic (spend + rate limits)
+TOKENWATCH_PROVIDER=anthropic \
+  TOKENWATCH_API_KEY="sk-ant-api03-..." \
+  TOKENWATCH_ADMIN_KEY="sk-ant-admin01-..." \
+  python3 src/token_watch.py
 ```
 
-All snap config keys have `TOKENWATCH_` environment variable equivalents:
-
-| Snap config                          | Env var                          |
-|--------------------------------------|----------------------------------|
-| `snap set token-watcher api-key=...` | `TOKENWATCH_API_KEY=...`         |
-| `snap set token-watcher refresh-interval=30` | `TOKENWATCH_REFRESH_INTERVAL=30` |
+All `snap set` keys map to `TOKENWATCH_<KEY>` env vars (uppercased, hyphens → underscores).
 
 ---
 
@@ -90,16 +113,39 @@ sudo snap install token-watcher_*.snap --dangerous
 
 ---
 
+## Adding a provider
+
+Each provider is a small class in `src/token_watch.py`. To add one:
+
+1. Create a class with `NAME`, `DISPLAY`, and a `fetch(**kwargs) -> dict` static method
+2. The `fetch` method receives `api_key`, `admin_key`, and any future config keys
+3. Return a dict via the `_result()` helper: `spend`, `spend_label`, `limit`, `extra`, `error`
+4. Register it in the `PROVIDERS` dict
+
+```python
+class MyProvider:
+    NAME    = "myprovider"
+    DISPLAY = "MY PROVIDER"
+
+    @staticmethod
+    def fetch(api_key: str, **kwargs) -> dict:
+        # ... call your API ...
+        return _result(spend=12.34, spend_label="this month")
+
+PROVIDERS["myprovider"] = MyProvider
+```
+
+---
+
 ## How it works
 
-The widget polls `https://openrouter.ai/api/v1/auth/key` on a timer. The
-`usage` field returns your spend in USD for the current billing period. Data
-is fetched in a background thread so the UI never blocks.
+The widget polls the configured provider's API on a timer. All API calls run
+in a background thread so the UI never blocks.
 
-Always-on-top behaviour is implemented via:
+Always-on-top behaviour:
 - **Wayland**: `gtk-layer-shell` (sets the `TOP` layer)
-- **X11**: `GdkToplevel.begin_move()` for dragging; `_NET_WM_STATE_ABOVE`
-  via `wmctrl` or `xdotool` (if installed) for the always-on-top state
+- **X11**: `GdkToplevel.begin_move()` for dragging; `_NET_WM_STATE_ABOVE` via
+  `wmctrl` or `xdotool` (if installed), with a `libX11` ctypes fallback
 
 ---
 
