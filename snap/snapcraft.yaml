@@ -32,7 +32,6 @@ website: https://github.com/jeff-hillman/token-watcher
 apps:
   token-watcher:
     command: bin/launcher
-    extensions: [gnome]
     plugs:
       - network
       - desktop
@@ -40,10 +39,13 @@ apps:
       - wayland
       - x11
       - home
+      - opengl
     environment:
       GTK_A11Y: none
-      GI_TYPELIB_PATH: $SNAP/usr/lib/x86_64-linux-gnu/girepository-1.0:$GI_TYPELIB_PATH
-      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+      PYTHONPATH: $SNAP/usr/lib/python3/dist-packages:$SNAP/usr/lib/python3.12
+      GI_TYPELIB_PATH: $SNAP/usr/lib/x86_64-linux-gnu/girepository-1.0
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/usr/lib
+      XDG_DATA_DIRS: $SNAP/usr/share:$XDG_DATA_DIRS
 
 parts:
   python-app:
@@ -65,6 +67,10 @@ parts:
       - gir1.2-gtklayershell-0.1
       - libgtk-4-1
       - libgtk-layer-shell0
+      - libglib2.0-0t64
+      - libcairo2
+      - libpango-1.0-0
+      - libpangocairo-1.0-0
 
   launcher:
     plugin: dump
