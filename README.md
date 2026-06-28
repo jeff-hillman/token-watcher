@@ -52,7 +52,7 @@ token-watcher
 
 - **Drag** anywhere on screen to reposition
 - **Double-click** to force an immediate refresh
-- **Right-click** for a quick menu (refresh / quit)
+- **Right-click** for a quick menu (refresh / toggle always-on-top / quit)
 - The dot in the top-right corner is green when data is fresh, amber when stale
 
 ---
@@ -81,7 +81,7 @@ All `snap set` keys map to `TOKENWATCH_<KEY>` env vars (uppercased, hyphens → 
 
 ```bash
 sudo snap install snapcraft --classic
-snapcraft
+snapcraft pack
 sudo snap install token-watcher_*.snap --dangerous
 ```
 
@@ -117,9 +117,12 @@ The widget polls the configured provider's API on a timer. All network calls
 run in a background thread so the UI never blocks.
 
 Always-on-top behaviour:
-- **Wayland**: `gtk-layer-shell` (sets the `TOP` layer)
-- **X11**: `GdkToplevel.begin_move()` for dragging; `_NET_WM_STATE_ABOVE` via
-  `wmctrl` or `xdotool` (if installed), with a `libX11` ctypes fallback
+- **Wayland**: `gtk-layer-shell` (`TOP` layer, initialized before window is shown)
+- **X11**: `_NET_WM_STATE_ABOVE` via `XChangeProperty` before map + `XSendEvent` client message after map
+
+Dragging:
+- **Wayland**: margin-based positioning via `gtk-layer-shell`
+- **X11**: `GdkToplevel.begin_move()` handed off to the compositor
 
 ---
 
