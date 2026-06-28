@@ -56,6 +56,7 @@ RADIUS = 10
 W      = 230
 H      = 96
 PAD    = 14
+DRAG_THRESHOLD = 4   # pixels of movement before a press becomes a drag
 
 
 # --------------------------------------------------------------------------
@@ -192,6 +193,10 @@ class TokenWatch(Gtk.ApplicationWindow):
         self._refresh_interval = int(get_config("refresh-interval", str(DEFAULT_REFRESH)))
         self._provider_name    = get_config("provider", DEFAULT_PROVIDER)
         self._provider_cls     = get_provider_class(self._provider_name)
+        self._layer_shell      = False   # True when gtk-layer-shell is active
+        self._drag_start       = None    # (ptr_x, ptr_y, margin_left, margin_top)
+        self._drag_active      = False   # True once pointer exceeds DRAG_THRESHOLD
+        self._always_on_top    = True    # togglable via right-click menu
 
         self._setup_window()
         self._setup_css()
@@ -211,6 +216,9 @@ class TokenWatch(Gtk.ApplicationWindow):
         self.set_decorated(False)
         self.set_resizable(False)
         self.set_default_size(W, H)
+        # Don't steal focus from other windows when clicked
+        self.set_focusable(False)
+        self.set_can_focus(False)
 
     def _setup_css(self):
         # Force dark theme for the popover/menu regardless of system theme
@@ -229,17 +237,23 @@ class TokenWatch(Gtk.ApplicationWindow):
         area.set_content_width(W)
         area.set_content_height(H)
         area.set_draw_func(self._draw)
+        area.set_focusable(False)
         self.set_child(area)
         self._area = area
 
     def _setup_gestures(self):
-        drag = Gtk.GestureClick()
-        drag.connect("pressed", self._drag_pressed)
-        self._area.add_controller(drag)
+        # Single controller for left-button press/release (handles drag + click + dbl-click)
+        lclick = Gtk.GestureClick()
+        lclick.connect("pressed",  self._on_press)
+        lclick.connect("released", self._on_release)
+        self._area.add_controller(lclick)
 
-        click = Gtk.GestureClick()
-        click.connect("released", self._click_released)
-        self._area.add_controller(click)
+        # Motion controller on the window (not the area) so it keeps receiving
+        # events even when the pointer moves outside the widget during a drag.
+        motion = Gtk.EventControllerMotion()
+        motion.connect("motion", self._on_motion)
+        self.add_controller(motion)
+        self._motion_ctrl = motion   # keep a reference
 
         rc = Gtk.GestureClick()
         rc.set_button(3)
@@ -247,18 +261,8 @@ class TokenWatch(Gtk.ApplicationWindow):
         self._area.add_controller(rc)
 
     def _setup_window_hints(self):
-        self.connect("realize", self._on_realize)
-
-    # ------------------------------------------------------------------
-    # Always-on-top / compositor hints
-    # ------------------------------------------------------------------
-
-    def _on_realize(self, widget):
-        surface = self.get_surface()
-        if surface is None:
-            return
-
-        # Wayland: gtk-layer-shell
+        # gtk-layer-shell: init_for_window MUST be called before the window
+        # is mapped (i.e. before present()/realize completes), so we do it here.
         try:
             gi.require_version('GtkLayerShell', '0.1')
             from gi.repository import GtkLayerShell
@@ -266,58 +270,54 @@ class TokenWatch(Gtk.ApplicationWindow):
                 GtkLayerShell.init_for_window(self)
                 GtkLayerShell.set_layer(self, GtkLayerShell.Layer.TOP)
                 GtkLayerShell.set_exclusive_zone(self, -1)
+                # Anchor to top-left so margin offsets are screen-relative
+                GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
+                GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP,  True)
+                # Start 20 px from top-right — user can drag to reposition
+                try:
+                    mon = Gdk.Display.get_default().get_monitors().get_item(0)
+                    geo = mon.get_geometry()
+                    GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT,
+                                             geo.width - W - 20)
+                except Exception:
+                    GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT, 20)
+                GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, 20)
+                self._layer_shell = True
                 return
         except Exception:
             pass
 
-        # X11: _NET_WM_STATE_ABOVE
-        try:
-            gi.require_version('GdkX11', '4.0')
-            from gi.repository import GdkX11
-            if isinstance(surface, GdkX11.X11Surface):
-                self._x11_set_above(surface)
-                return
-        except Exception:
-            pass
+        # X11 / non-layer-shell Wayland: use realize + map signals
+        self.connect("realize", self._on_realize)
+        self.connect("map",     self._on_map)
 
-        print("token-watcher: could not set always-on-top", file=sys.stderr)
+    # ------------------------------------------------------------------
+    # Always-on-top / compositor hints
+    # ------------------------------------------------------------------
 
-    def _x11_set_above(self, surface):
-        import shutil
-        xid = surface.get_xid()
-        if shutil.which("wmctrl"):
-            try:
-                subprocess.Popen(["wmctrl", "-i", "-r", hex(xid), "-b", "add,above"],
-                                 stderr=subprocess.DEVNULL)
-                return
-            except Exception:
-                pass
-        if shutil.which("xdotool"):
-            try:
-                subprocess.Popen(["xdotool", "windowstate", "--add", "ABOVE", str(xid)],
-                                 stderr=subprocess.DEVNULL)
-                return
-            except Exception:
-                pass
-        # ctypes fallback
+    def _on_realize(self, widget):
+        # Stamp _NET_WM_STATE_ABOVE as a window property before map so the WM
+        # picks it up on first show. _on_map will send the client message after.
         ctx = self._x11_ctx()
         if ctx is None:
             return
         import ctypes
-        xlib, xdisplay, xwindow, xroot = ctx
+        xlib, xdisplay, xwindow, _ = ctx
         xlib.XInternAtom.restype = ctypes.c_ulong
         NET_WM_STATE       = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE",       False)
         NET_WM_STATE_ABOVE = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE_ABOVE", False)
-        class _Ev(ctypes.Structure):
-            _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong),
-                        ("send_event", ctypes.c_int), ("display", ctypes.c_void_p),
-                        ("window", ctypes.c_ulong), ("message_type", ctypes.c_ulong),
-                        ("format", ctypes.c_int), ("data", ctypes.c_ulong * 5)]
-        ev = _Ev()
-        ev.type = 33; ev.window = xwindow; ev.message_type = NET_WM_STATE
-        ev.format = 32; ev.data[0] = 1; ev.data[1] = NET_WM_STATE_ABOVE; ev.data[3] = 1
-        xlib.XSendEvent(xdisplay, xroot, False, 0x00080000 | 0x00100000, ctypes.byref(ev))
+        xlib.XChangeProperty.restype = ctypes.c_int
+        xlib.XChangeProperty(xdisplay, xwindow, NET_WM_STATE,
+                             ctypes.c_ulong(4), 32, 0,
+                             ctypes.cast(ctypes.byref(ctypes.c_ulong(NET_WM_STATE_ABOVE)),
+                                         ctypes.c_char_p),
+                             1)
         xlib.XFlush(xdisplay)
+
+    def _on_map(self, widget):
+        # After the window is mapped, send a client message so the WM
+        # re-evaluates the state (needed for GNOME Shell / Mutter on X11).
+        self._x11_set_above_state(self._always_on_top)
 
     def _x11_ctx(self):
         import ctypes, ctypes.util
@@ -457,27 +457,74 @@ class TokenWatch(Gtk.ApplicationWindow):
         PangoCairo.show_layout(cr, layout)
 
     # ------------------------------------------------------------------
-    # Drag-to-move (WM-native via GdkToplevel.begin_move)
+    # Press / drag / release — unified handler
     # ------------------------------------------------------------------
 
-    def _drag_pressed(self, gesture, n_press, x, y):
-        surface = self.get_surface()
-        if surface is None:
+    def _on_press(self, gesture, n_press, x, y):
+        # Record press position; motion handler decides if this becomes a drag
+        self._drag_start  = (x, y, self._ls_margin_left(), self._ls_margin_top())
+        self._drag_active = False
+
+    def _on_motion(self, controller, x, y):
+        if self._drag_start is None:
             return
-        sequence  = gesture.get_current_sequence()
-        event     = gesture.get_last_event(sequence)
-        if event is None:
-            return
-        surface.begin_move(event.get_device(), 1, x, y, event.get_time())
-        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        start_x, start_y, orig_left, orig_top = self._drag_start
+        dx = x - start_x
+        dy = y - start_y
 
-    # ------------------------------------------------------------------
-    # Click interactions
-    # ------------------------------------------------------------------
+        if not self._drag_active:
+            if (dx * dx + dy * dy) < DRAG_THRESHOLD * DRAG_THRESHOLD:
+                return   # not enough movement yet — don't start a drag
+            self._drag_active = True
 
-    def _click_released(self, gesture, n_press, x, y):
-        if n_press == 2:
+        if self._layer_shell:
+            try:
+                gi.require_version('GtkLayerShell', '0.1')
+                from gi.repository import GtkLayerShell
+                GtkLayerShell.set_margin(self, GtkLayerShell.Edge.LEFT,
+                                         max(0, orig_left + int(dx)))
+                GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP,
+                                         max(0, orig_top  + int(dy)))
+            except Exception:
+                pass
+        else:
+            # WM-native move — delegate to compositor on first motion past threshold
+            surface = self.get_surface()
+            if surface is None:
+                return
+            # Reconstruct an event for begin_move; use the motion event's device
+            # by asking the gesture for the last event instead
+            event = controller.get_current_event()
+            if event is None:
+                return
+            surface.begin_move(event.get_device(), 1,
+                                start_x + dx, start_y + dy,
+                                event.get_time())
+            # After handing off to WM, clear so we don't keep calling begin_move
+            self._drag_start = None
+
+    def _on_release(self, gesture, n_press, x, y):
+        was_drag = self._drag_active
+        self._drag_start  = None
+        self._drag_active = False
+        if not was_drag and n_press == 2:
             self._async_fetch()
+
+    def _ls_margin_left(self):
+        try:
+            gi.require_version('GtkLayerShell', '0.1')
+            from gi.repository import GtkLayerShell
+            return GtkLayerShell.get_margin(self, GtkLayerShell.Edge.LEFT)
+        except Exception:
+            return 0
+
+    def _ls_margin_top(self):
+        try:
+            gi.require_version('GtkLayerShell', '0.1')
+            from gi.repository import GtkLayerShell
+            return GtkLayerShell.get_margin(self, GtkLayerShell.Edge.TOP)
+        except Exception:
+            return 0
 
     def _right_click(self, gesture, n_press, x, y):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -485,6 +532,11 @@ class TokenWatch(Gtk.ApplicationWindow):
         btn_refresh = Gtk.Button(label="Refresh now")
         btn_refresh.connect("clicked", lambda _: (self._async_fetch(), popover.popdown()))
         box.append(btn_refresh)
+
+        aot_label = "Disable always on top" if self._always_on_top else "Enable always on top"
+        btn_aot = Gtk.Button(label=aot_label)
+        btn_aot.connect("clicked", lambda _: (self._toggle_always_on_top(), popover.popdown()))
+        box.append(btn_aot)
 
         btn_quit = Gtk.Button(label="Quit")
         btn_quit.connect("clicked", lambda _: self.get_application().quit())
@@ -497,6 +549,65 @@ class TokenWatch(Gtk.ApplicationWindow):
         rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
         popover.set_pointing_to(rect)
         popover.popup()
+
+    def _toggle_always_on_top(self):
+        self._always_on_top = not self._always_on_top
+        if self._layer_shell:
+            try:
+                gi.require_version('GtkLayerShell', '0.1')
+                from gi.repository import GtkLayerShell
+                layer = GtkLayerShell.Layer.TOP if self._always_on_top \
+                        else GtkLayerShell.Layer.BOTTOM
+                GtkLayerShell.set_layer(self, layer)
+            except Exception:
+                pass
+        else:
+            self._x11_set_above_state(self._always_on_top)
+
+    def _x11_set_above_state(self, enable):
+        ctx = self._x11_ctx()
+        if ctx is None:
+            return
+        import ctypes
+        xlib, xdisplay, xwindow, xroot = ctx
+        xlib.XInternAtom.restype = ctypes.c_ulong
+        NET_WM_STATE       = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE",       False)
+        NET_WM_STATE_ABOVE = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE_ABOVE", False)
+
+        if enable:
+            # Stamp the property directly on the window so the WM sees it
+            xlib.XChangeProperty.restype = ctypes.c_int
+            xlib.XChangeProperty(xdisplay, xwindow, NET_WM_STATE,
+                                 ctypes.c_ulong(4),   # XA_ATOM
+                                 32, 0,               # PropModeReplace
+                                 ctypes.cast(ctypes.byref(ctypes.c_ulong(NET_WM_STATE_ABOVE)),
+                                             ctypes.c_char_p),
+                                 1)
+        else:
+            # Remove the property entirely so the WM can't re-read it
+            xlib.XDeleteProperty(xdisplay, xwindow, NET_WM_STATE)
+
+        # Send client message — use source=2 (pager) so GNOME Shell honours it
+        class _Ev(ctypes.Structure):
+            _fields_ = [("type",         ctypes.c_int),
+                        ("serial",        ctypes.c_ulong),
+                        ("send_event",    ctypes.c_int),
+                        ("display",       ctypes.c_void_p),
+                        ("window",        ctypes.c_ulong),
+                        ("message_type",  ctypes.c_ulong),
+                        ("format",        ctypes.c_int),
+                        ("data",          ctypes.c_ulong * 5)]
+        ev = _Ev()
+        ev.type         = 33          # ClientMessage
+        ev.window       = xwindow
+        ev.message_type = NET_WM_STATE
+        ev.format       = 32
+        ev.data[0]      = 1 if enable else 0   # _NET_WM_STATE_ADD / _REMOVE
+        ev.data[1]      = NET_WM_STATE_ABOVE
+        ev.data[2]      = 0
+        ev.data[3]      = 2           # source: pager (GNOME Shell respects this)
+        xlib.XSendEvent(xdisplay, xroot, False, 0x00080000 | 0x00100000, ctypes.byref(ev))
+        xlib.XFlush(xdisplay)
 
     # ------------------------------------------------------------------
     # Data fetch

@@ -1,5 +1,6 @@
 name: token-watcher
-version: "0.1.0"
+version: "0.2.0"
+title: Token Watcher
 summary: Floating desktop widget to monitor AI API spend
 description: |
   A lightweight always-on-top GTK4 desktop widget for Ubuntu that shows
@@ -20,6 +21,7 @@ description: |
   The widget floats above all windows. Drag it anywhere on screen.
   Double-click to force an immediate refresh. Right-click for options.
 
+license: GPL-3.0
 grade: stable
 confinement: strict
 base: core24
@@ -28,6 +30,10 @@ contact: https://github.com/jeff-hillman/token-watcher/issues
 issues: https://github.com/jeff-hillman/token-watcher/issues
 source-code: https://github.com/jeff-hillman/token-watcher
 website: https://github.com/jeff-hillman/token-watcher
+
+lint:
+  ignore:
+    - library
 
 apps:
   token-watcher:
