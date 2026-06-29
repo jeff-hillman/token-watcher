@@ -310,11 +310,12 @@ class TokenWatch(Gtk.ApplicationWindow):
             return
         import ctypes
         xlib, xdisplay, xwindow, _ = ctx
-        xlib.XInternAtom.restype  = ctypes.c_ulong
+        xlib.XInternAtom.restype     = ctypes.c_ulong
         xlib.XChangeProperty.restype = ctypes.c_int
 
-        XA_ATOM = ctypes.c_ulong(4)
-        PropModeReplace = 0
+        XA_ATOM         = ctypes.c_ulong(4)
+        XA_CARDINAL     = ctypes.c_ulong(6)
+        PropModeReplace  = 0
 
         def _intern(name):
             return xlib.XInternAtom(xdisplay, name, False)
@@ -326,20 +327,24 @@ class TokenWatch(Gtk.ApplicationWindow):
                                  ctypes.cast(arr, ctypes.c_char_p),
                                  len(atoms))
 
-        # Window type: UTILITY — excluded from alt-tab by virtually all WMs
-        NET_WM_WINDOW_TYPE         = _intern(b"_NET_WM_WINDOW_TYPE")
-        NET_WM_WINDOW_TYPE_UTILITY = _intern(b"_NET_WM_WINDOW_TYPE_UTILITY")
-        _set_atoms(NET_WM_WINDOW_TYPE, NET_WM_WINDOW_TYPE_UTILITY)
+        # _NET_WM_STATE: above only — no SKIP_TASKBAR so it stays visible in
+        # the GNOME overview (Super key)
+        NET_WM_STATE       = _intern(b"_NET_WM_STATE")
+        NET_WM_STATE_ABOVE = _intern(b"_NET_WM_STATE_ABOVE")
+        _set_atoms(NET_WM_STATE, NET_WM_STATE_ABOVE)
 
-        # State: above + skip taskbar + skip pager (keep out of focus cycle)
-        NET_WM_STATE              = _intern(b"_NET_WM_STATE")
-        NET_WM_STATE_ABOVE        = _intern(b"_NET_WM_STATE_ABOVE")
-        NET_WM_STATE_SKIP_TASKBAR = _intern(b"_NET_WM_STATE_SKIP_TASKBAR")
-        NET_WM_STATE_SKIP_PAGER   = _intern(b"_NET_WM_STATE_SKIP_PAGER")
-        _set_atoms(NET_WM_STATE,
-                   NET_WM_STATE_ABOVE,
-                   NET_WM_STATE_SKIP_TASKBAR,
-                   NET_WM_STATE_SKIP_PAGER)
+        # WM_HINTS: input = 0 — ICCCM hint telling the WM never to give this
+        # window input focus (keeps it out of alt-tab without hiding it from
+        # the overview)
+        WM_HINTS = _intern(b"WM_HINTS")
+        # XWMHints struct (all c_long): flags, input, initial_state,
+        #   icon_pixmap, icon_window, icon_x, icon_y, icon_mask, window_group
+        # InputHint flag = 1 << 0 = 1
+        hints = (ctypes.c_long * 9)(1, 0, 0, 0, 0, 0, 0, 0, 0)
+        xlib.XChangeProperty(xdisplay, xwindow, WM_HINTS,
+                             WM_HINTS, 32, PropModeReplace,
+                             ctypes.cast(hints, ctypes.c_char_p),
+                             9)
 
         xlib.XFlush(xdisplay)
 
