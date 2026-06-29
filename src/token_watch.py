@@ -270,13 +270,6 @@ class TokenWatch(Gtk.ApplicationWindow):
                 GtkLayerShell.init_for_window(self)
                 GtkLayerShell.set_layer(self, GtkLayerShell.Layer.TOP)
                 GtkLayerShell.set_exclusive_zone(self, -1)
-                # Never give this surface keyboard focus — keeps it out of
-                # the compositor's focus cycle (alt-tab, etc.)
-                try:
-                    GtkLayerShell.set_keyboard_mode(
-                        self, GtkLayerShell.KeyboardMode.NONE)
-                except Exception:
-                    pass  # older gtk-layer-shell versions may not have this
                 # Anchor to top-left so margin offsets are screen-relative
                 GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
                 GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP,  True)
@@ -303,8 +296,8 @@ class TokenWatch(Gtk.ApplicationWindow):
     # ------------------------------------------------------------------
 
     def _on_realize(self, widget):
-        # Stamp window hints before map so the WM picks them up on first show.
-        # _on_map will send the client message to re-evaluate _ABOVE afterward.
+        # Stamp _NET_WM_STATE_ABOVE as a window property before map so the WM
+        # picks it up on first show. _on_map will send the client message after.
         ctx = self._x11_ctx()
         if ctx is None:
             return
@@ -312,40 +305,13 @@ class TokenWatch(Gtk.ApplicationWindow):
         xlib, xdisplay, xwindow, _ = ctx
         xlib.XInternAtom.restype     = ctypes.c_ulong
         xlib.XChangeProperty.restype = ctypes.c_int
-
-        XA_ATOM         = ctypes.c_ulong(4)
-        XA_CARDINAL     = ctypes.c_ulong(6)
-        PropModeReplace  = 0
-
-        def _intern(name):
-            return xlib.XInternAtom(xdisplay, name, False)
-
-        def _set_atoms(prop, *atoms):
-            arr = (ctypes.c_ulong * len(atoms))(*atoms)
-            xlib.XChangeProperty(xdisplay, xwindow, prop,
-                                 XA_ATOM, 32, PropModeReplace,
-                                 ctypes.cast(arr, ctypes.c_char_p),
-                                 len(atoms))
-
-        # _NET_WM_STATE: above only — no SKIP_TASKBAR so it stays visible in
-        # the GNOME overview (Super key)
-        NET_WM_STATE       = _intern(b"_NET_WM_STATE")
-        NET_WM_STATE_ABOVE = _intern(b"_NET_WM_STATE_ABOVE")
-        _set_atoms(NET_WM_STATE, NET_WM_STATE_ABOVE)
-
-        # WM_HINTS: input = 0 — ICCCM hint telling the WM never to give this
-        # window input focus (keeps it out of alt-tab without hiding it from
-        # the overview)
-        WM_HINTS = _intern(b"WM_HINTS")
-        # XWMHints struct (all c_long): flags, input, initial_state,
-        #   icon_pixmap, icon_window, icon_x, icon_y, icon_mask, window_group
-        # InputHint flag = 1 << 0 = 1
-        hints = (ctypes.c_long * 9)(1, 0, 0, 0, 0, 0, 0, 0, 0)
-        xlib.XChangeProperty(xdisplay, xwindow, WM_HINTS,
-                             WM_HINTS, 32, PropModeReplace,
-                             ctypes.cast(hints, ctypes.c_char_p),
-                             9)
-
+        NET_WM_STATE       = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE",       False)
+        NET_WM_STATE_ABOVE = xlib.XInternAtom(xdisplay, b"_NET_WM_STATE_ABOVE", False)
+        xlib.XChangeProperty(xdisplay, xwindow, NET_WM_STATE,
+                             ctypes.c_ulong(4), 32, 0,
+                             ctypes.cast(ctypes.byref(ctypes.c_ulong(NET_WM_STATE_ABOVE)),
+                                         ctypes.c_char_p),
+                             1)
         xlib.XFlush(xdisplay)
 
     def _on_map(self, widget):
